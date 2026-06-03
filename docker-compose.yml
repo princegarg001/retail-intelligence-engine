@@ -1,0 +1,66 @@
+version: "3.8"
+
+services:
+  # ─── Intelligence API ────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: store-intelligence-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - SI_DB_PATH=/app/data/store_intelligence.db
+      - POS_CSV_PATH=/app/data/pos_transactions.csv
+      - SAMPLE_EVENTS_PATH=/app/data/sample_events.jsonl
+      - STORE_LAYOUT_PATH=/app/data/store_layout.json
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # ─── Detection Pipeline ──────────────────────────────────────
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: store-intelligence-pipeline
+    command: >
+      python -m pipeline.run_pipeline
+        --video-dir /app/data/videos
+        --output /app/data/events.jsonl
+        --store-id ST1008
+        --frame-skip 5
+        --ingest
+        --api-url http://api:8000
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: "no"
+
+  # ─── Live Dashboard ──────────────────────────────────────────
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: store-intelligence-dashboard
+    command: streamlit run dashboard/live.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+      - STORE_ID=ST1008
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
